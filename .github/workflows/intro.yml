@@ -1,12 +1,17 @@
-name: Hello world
+name: Install && Build
 
 on:
   push:
 
 jobs:
-  hello-world:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
-      - run: echo "hello world"
+      - name: Show node version
+        run: echo node -v
+      - name: Instal dependencies
+        run: npm install
+      - name: Build App
+        run: npm run build
