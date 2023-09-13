@@ -1,21 +1,23 @@
-name: Install and Build
+name: Intro to Github Actions
 
 env:
   VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
   VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+  NETLIFY_SITE_ID: 3ac00091-2633-469e-86c6-1a0efb4bbcfe
+  NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+  NAME: 'John Doe'
 
+# When does this workflow run
 on:
   push:
 
 jobs:
-  build:
+  build-test:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show node version
-        run: echo node -v
+      - run: echo "Welcome ${{ env.NAME }}"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2.4.0
@@ -36,28 +38,86 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: Install dependencies
+      - name: Install
         run: pnpm install
 
-      - name: Build the app
+      - name: Build
         run: pnpm run build
 
-      - name: Test the connection
+      - name: Run the server
         run: |
-              pnpm run preview &
-              sleep 5
-              curl -I http://localhost:4173
+          pnpm run preview &
+          sleep 5
 
-      # - name: Notify
-      #   if: failure()
-      #   run: echo fail
+      - name: Curl the server
+        run: curl -I http://localhost:4173
+
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2.4.0
+        with:
+          version: 8
+          run_install: false
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install
+        run: pnpm install
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Run the server
+        run: |
+          pnpm run preview --host &
+          sleep 5
+
+      - name: Curl the server
+        run: curl -I http://localhost:4173
+
+      - name: Take a snapshot
+        run: |
+          mkdir -m 777 gen
+          docker run -i --init --cap-add=SYS_ADMIN --network host -v ./gen:/home/pptruser/gen ghcr.io/puppeteer/puppeteer:latest node -e "$(cat snapshot.js)" http://127.0.0.1:4173 ./gen
+          sed -i 's/http:\/\/localhost:4173/https:\/\/cv.bnei.dev/g' ./gen/*
+
+          mv gen/* static/
+
+      - name: git config
+        run: |
+          git config --global user.name "Github Action CI"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: git commit
+        run: |
+          git add static
+          git commit -m "Snapshot ${{ github.sha }}"
+          git push
 
   deploy:
     runs-on: ubuntu-latest
-    needs: build
+    needs: build-test
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v2.4.0
@@ -78,14 +138,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Netlify Deploy
-        uses: jsmrcaga/action-netlify-deploy@v2.0.0
+      - uses: jsmrcaga/action-netlify-deploy@v2.0.0
         with:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          NETLIFY_SITE_ID: ${{ env.NETLIFY_SITE_ID }}
+          install_command: pnpm i
           build_command: pnpm run build
-          install_command: pnpm install
-    
+
+      # - name: Install vercel cli
+      #   run: pnpm i -g vercel@latest
+
+      # - name: Get vercel environnement
+      #   run: vercel pull --yes --token=${{ secrets.VERCEL_TOKEN }}
+
+      # - name: Build Project Artifacts
+      #   run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+
+      # - name: Deploy Project Artifacts to Vercel
+      #   run: vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }}
